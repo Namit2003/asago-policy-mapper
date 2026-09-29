@@ -550,9 +550,9 @@
                       <td class="py-1 px-2 font-mono" x-text="tax"></td>
                       <td class="text-right py-1 px-2" x-text="td.expected"></td>
                       <td class="text-right py-1 px-2" x-text="td.matched"></td>
-                      <td class="text-right py-1 px-2" x-text="td.precision.toFixed(3)"></td>
-                      <td class="text-right py-1 px-2" x-text="td.recall.toFixed(3)"></td>
-                      <td class="text-right py-1 px-2 font-semibold" x-text="td.f1.toFixed(3)"></td>
+                      <td class="text-right py-1 px-2" x-text="td.precision?.toFixed(3) ?? '—'"></td>
+                      <td class="text-right py-1 px-2" x-text="td.recall?.toFixed(3) ?? '—'"></td>
+                      <td class="text-right py-1 px-2 font-semibold" x-text="td.f1?.toFixed(3) ?? '—'"></td>
                     </tr>
                   </template>
                 </tbody>

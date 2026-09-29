@@ -93,13 +93,16 @@ def _build_taxonomy_map(ext_data: dict) -> dict[str, str]:
     return mapping
 
 
-def _compute_prf(matched: int, expected: int, extracted: int) -> tuple[float, float, float]:
-    missing = expected - matched
-    spurious = extracted - matched
-    precision = matched / (matched + spurious) if matched + spurious > 0 else 0.0
-    recall = matched / (matched + missing) if matched + missing > 0 else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
+def compute_prf(matched: int, expected: int, extracted: int) -> tuple[float | None, float | None, float | None]:
+    """Return None for undefined metrics (0/0) so they aren't mistaken for a real 0.0."""
+    precision = matched / extracted if extracted > 0 else None
+    recall = matched / expected if expected > 0 else None
+    f1 = 2 * matched / (expected + extracted) if expected + extracted > 0 else None
     return precision, recall, f1
+
+
+def _round_metric(value: float | None) -> float | None:
+    return None if value is None else round(value, 3)
 
 
 def _per_taxonomy_breakdown(
@@ -128,16 +131,16 @@ def _per_taxonomy_breakdown(
         n_exp = len(t["expected"])
         n_ext = len(t["extracted"])
         n_match = len(t["matched"])
-        precision, recall, f1 = _compute_prf(n_match, n_exp, n_ext)
+        precision, recall, f1 = compute_prf(n_match, n_exp, n_ext)
         result[tax] = {
             "expected": n_exp,
             "extracted": n_ext,
             "matched": n_match,
             "missing": sorted(t["expected"] - t["matched"]),
             "spurious": sorted(t["extracted"] - t["matched"]),
-            "precision": round(precision, 3),
-            "recall": round(recall, 3),
-            "f1": round(f1, 3),
+            "precision": _round_metric(precision),
+            "recall": _round_metric(recall),
+            "f1": _round_metric(f1),
         }
     return result
 
@@ -210,15 +213,15 @@ def _evaluate_categories(
         matched = exp & ext
         missing = sorted(exp - ext)
         spurious = sorted(ext - exp)
-        p, r, f = _compute_prf(len(matched), len(exp), len(ext))
+        p, r, f = compute_prf(len(matched), len(exp), len(ext))
         result[tax] = {
             "expected": sorted(exp),
             "extracted": sorted(ext),
             "matched": sorted(matched),
             "missing": missing,
             "spurious": spurious,
-            "precision": round(p, 3),
-            "recall": round(r, 3),
-            "f1": round(f, 3),
+            "precision": _round_metric(p),
+            "recall": _round_metric(r),
+            "f1": _round_metric(f),
         }
     return result

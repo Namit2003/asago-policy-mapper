@@ -4,9 +4,11 @@ import pytest
 
 from asago_policy_mapper.evals.eval import (
     _derive_categories,
+    _evaluate_categories,
     _infer_taxonomy,
     _load_risk_to_category_map,
     _sanitise_risk_id,
+    compute_prf,
     evaluate_extraction,
 )
 from asago_policy_mapper.extract.models import (
@@ -211,6 +213,70 @@ def test_infer_taxonomy():
     assert _infer_taxonomy("unknown-risk-id") == "unknown"
 
 
+def test_compute_prf_normal_case():
+    p, r, f = compute_prf(matched=2, expected=4, extracted=3)
+    assert p == pytest.approx(2 / 3)
+    assert r == pytest.approx(2 / 4)
+    assert f == pytest.approx(2 * (2 / 3) * (2 / 4) / ((2 / 3) + (2 / 4)))
+
+
+def test_compute_prf_nothing_extracted_precision_undefined():
+    """Expected risks but nothing extracted: recall is a real 0.0, precision is undefined."""
+    p, r, f = compute_prf(matched=0, expected=3, extracted=0)
+    assert p is None
+    assert r == 0.0
+    assert f == 0.0
+
+
+def test_compute_prf_nothing_expected_recall_undefined():
+    """Nothing expected but risks extracted: precision is a real 0.0, recall is undefined."""
+    p, r, f = compute_prf(matched=0, expected=0, extracted=2)
+    assert p == 0.0
+    assert r is None
+    assert f == 0.0
+
+
+def test_compute_prf_both_empty_all_undefined():
+    assert compute_prf(matched=0, expected=0, extracted=0) == (None, None, None)
+
+
+def test_compute_prf_all_wrong_is_distinguishable_from_undefined():
+    """A slice where every extraction is wrong scores 0.0, not None."""
+    p, r, f = compute_prf(matched=0, expected=2, extracted=2)
+    assert (p, r, f) == (0.0, 0.0, 0.0)
+
+
+def test_category_eval_one_sided_taxonomies_report_undefined_as_none():
+    risk_to_cat = {
+        "atlas-a": {"nist-ai-rmf": {"nist-x"}},
+        "atlas-b": {"owasp-asi": {"asi-1"}},
+    }
+
+    spurious_only = _evaluate_categories({"atlas-a"}, {"atlas-a", "atlas-b"}, risk_to_cat)
+    asi = spurious_only["owasp-asi"]
+    assert asi["precision"] == 0.0
+    assert asi["recall"] is None
+    assert asi["f1"] == 0.0
+
+    missed_only = _evaluate_categories({"atlas-a", "atlas-b"}, {"atlas-a"}, risk_to_cat)
+    asi = missed_only["owasp-asi"]
+    assert asi["precision"] is None
+    assert asi["recall"] == 0.0
+    assert asi["f1"] == 0.0
+
+    # Fully-scored taxonomies are unaffected.
+    assert spurious_only["nist-ai-rmf"]["f1"] == 1.0
+
+
+def test_category_eval_both_empty_taxonomy_is_omitted():
+    risk_to_cat = {
+        "atlas-a": {"nist-ai-rmf": {"nist-x"}},
+        "atlas-b": {"owasp-asi": {"asi-1"}},
+    }
+    result = _evaluate_categories({"atlas-a"}, {"atlas-a"}, risk_to_cat)
+    assert "owasp-asi" not in result
+
+
 def test_evaluate_extraction_per_taxonomy(tmp_path):
     gt = tmp_path / "multi-tax.yaml"
     gt.write_text("risk_ids:\n  - atlas-bias\n  - atlas-privacy\n  - nist-data-privacy\n  - credo-risk-021\n")
@@ -297,7 +363,11 @@ def test_evaluate_extraction_per_taxonomy(tmp_path):
     credo = pt["credo-ucf"]
     assert credo["expected"] == 1
     assert credo["matched"] == 0
+    assert credo["extracted"] == 0
     assert credo["recall"] == 0.0
+    # Nothing extracted for credo, so precision is undefined rather than 0.0.
+    assert credo["precision"] is None
+    assert credo["f1"] == 0.0
 
 
 def test_evaluate_extraction_per_taxonomy_from_filtered(tmp_path):
