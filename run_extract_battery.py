@@ -26,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from asago_policy_mapper.evals.eval import evaluate_extraction
+from asago_policy_mapper.evals.eval import compute_prf, evaluate_extraction
 from asago_policy_mapper.tracking import (
     end_tracking,
     init_tracking,
@@ -257,6 +257,20 @@ def run_eval(name: str, runs_dir: Path, min_recall: float = 0.80, min_precision:
     return result
 
 
+def _fmt_metric(value: float | None, spec: str = ".3f") -> str:
+    """Format a metric for display, showing an em dash when it is undefined."""
+    return "—" if value is None else format(value, spec)
+
+
+def _aggregate_pr(agg: dict[str, int]) -> dict[str, float | None]:
+    """Rounded precision/recall for a cross-policy taxonomy aggregate (``None`` if undefined)."""
+    p, r, _ = compute_prf(agg["matched"], agg["expected"], agg["extracted"])
+    return {
+        "precision": None if p is None else round(p, 3),
+        "recall": None if r is None else round(r, 3),
+    }
+
+
 def _build_battery_report(summary: dict, output_path: Path) -> None:
     eval_results = summary.get("eval_results", {})
     tax_agg = summary.get("taxonomy_aggregate", {})
@@ -288,8 +302,8 @@ def _build_battery_report(summary: dict, output_path: Path) -> None:
             cells = []
             for tax in taxonomies:
                 td = per_tax.get(tax)
-                if td and td["expected"] > 0:
-                    val = td[metric]
+                val = td[metric] if td else None
+                if val is not None:
                     style = _cell_color(val)
                     cells.append(
                         f'<td style="{style} text-align:center; padding:4px 8px; font-size:13px;">{val:.2f}</td>'
@@ -329,11 +343,8 @@ def _build_battery_report(summary: dict, output_path: Path) -> None:
         a = tax_agg[tax]
         m, e = a["matched"], a["expected"]
         x = a.get("extracted", m)
-        spur = x - m
-        p = m / (m + spur) if m + spur > 0 else 0.0
-        r = m / e if e > 0 else 0.0
-        f = 2 * p * r / (p + r) if p + r > 0 else 0.0
-        tax_rows += f"<tr><td style='padding:4px 8px;'>{tax}</td><td style='text-align:right; padding:4px 8px;'>{e}</td><td style='text-align:right; padding:4px 8px;'>{m}</td><td style='text-align:right; padding:4px 8px;'>{p:.3f}</td><td style='text-align:right; padding:4px 8px;'>{r:.3f}</td><td style='text-align:right; padding:4px 8px;'>{f:.3f}</td></tr>"
+        p, r, f = compute_prf(m, e, x)
+        tax_rows += f"<tr><td style='padding:4px 8px;'>{tax}</td><td style='text-align:right; padding:4px 8px;'>{e}</td><td style='text-align:right; padding:4px 8px;'>{m}</td><td style='text-align:right; padding:4px 8px;'>{_fmt_metric(p)}</td><td style='text-align:right; padding:4px 8px;'>{_fmt_metric(r)}</td><td style='text-align:right; padding:4px 8px;'>{_fmt_metric(f)}</td></tr>"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -709,9 +720,10 @@ def main():
                 child_metrics["matched"] = float(ev["matched"])
                 child_tags["eval_status"] = "PASS" if ev["pass"] else "FAIL"
                 for tax, td in ev.get("per_taxonomy", {}).items():
-                    child_metrics[f"{tax}/recall"] = td["recall"]
-                    child_metrics[f"{tax}/precision"] = td["precision"]
-                    child_metrics[f"{tax}/f1"] = td["f1"]
+                    # MLflow metrics must be floats; skip metrics that are undefined for this slice.
+                    for metric in ("recall", "precision", "f1"):
+                        if td[metric] is not None:
+                            child_metrics[f"{tax}/{metric}"] = td[metric]
                 eval_path = runs_dir / name / "eval.json"
                 if eval_path.exists():
                     child_artifacts.append(eval_path)
@@ -786,30 +798,15 @@ def main():
             for tax in sorted(tax_agg):
                 a = tax_agg[tax]
                 m, e, x = a["matched"], a["expected"], a["extracted"]
-                spur = x - m
-                p = m / (m + spur) if m + spur > 0 else 0.0
-                r = m / e if e > 0 else 0.0
-                f = 2 * p * r / (p + r) if p + r > 0 else 0.0
-                print(f"{tax:<{tw}}  {e:>6}  {m:>5}  {p:>7.3f}  {r:>7.3f}  {f:>7.3f}")
+                p, r, f = compute_prf(m, e, x)
+                print(f"{tax:<{tw}}  {e:>6}  {m:>5}  {_fmt_metric(p):>7}  {_fmt_metric(r):>7}  {_fmt_metric(f):>7}")
 
         battery_summary = {
             "battery": battery_name,
             "model": model,
             "timestamp": timestamp,
             "eval_results": {name: ev for name, ev in eval_results.items()},
-            "taxonomy_aggregate": {
-                tax: {
-                    **a,
-                    "precision": round(
-                        a["matched"] / (a["matched"] + a["extracted"] - a["matched"])
-                        if a["matched"] + a["extracted"] - a["matched"] > 0
-                        else 0.0,
-                        3,
-                    ),
-                    "recall": round(a["matched"] / a["expected"] if a["expected"] > 0 else 0.0, 3),
-                }
-                for tax, a in tax_agg.items()
-            },
+            "taxonomy_aggregate": {tax: {**a, **_aggregate_pr(a)} for tax, a in tax_agg.items()},
         }
         summary_path = runs_dir / "battery-summary.json"
         summary_path.write_text(json.dumps(battery_summary, indent=2))
@@ -834,14 +831,11 @@ def main():
             parent_metrics["macro_f1"] = sum(ev["f1"] for ev in eval_results.values()) / len(eval_results)
             if tax_agg:
                 for tax, a in tax_agg.items():
-                    m, e, x = a["matched"], a["expected"], a["extracted"]
-                    spur = x - m
-                    p = m / (m + spur) if m + spur > 0 else 0.0
-                    r = m / e if e > 0 else 0.0
-                    f = 2 * p * r / (p + r) if p + r > 0 else 0.0
-                    parent_metrics[f"{tax}/recall"] = r
-                    parent_metrics[f"{tax}/precision"] = p
-                    parent_metrics[f"{tax}/f1"] = f
+                    p, r, f = compute_prf(a["matched"], a["expected"], a["extracted"])
+                    # MLflow metrics must be floats; skip metrics that are undefined for this taxonomy.
+                    for metric, value in (("recall", r), ("precision", p), ("f1", f)):
+                        if value is not None:
+                            parent_metrics[f"{tax}/{metric}"] = value
 
         log_metrics(tracking_ctx, parent_metrics)
 

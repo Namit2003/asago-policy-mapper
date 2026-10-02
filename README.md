@@ -86,6 +86,8 @@ The pipeline extracts **risk-level** risks (IBM Risk Atlas, Credo UCF, AIR 2024,
 
 Category-level eval answers "did we find the right risk themes?" — more forgiving than risk-level since finding *any* bias-related risk satisfies the NIST `harmful-bias-or-homogenization` category.
 
+Per-taxonomy and category-level scores report `null` for a metric that is undefined for that slice: precision when nothing was extracted, recall when nothing was expected. These are shown as `—` in reports and are not logged to MLflow, so they can't be mistaken for a genuine 0.0. F1 is still 0.0 for such one-sided slices, since the result was wrong.
+
 ### Cross-Taxonomy Mapping
 
 `src/asago_policy_mapper/data/risk_to_category.sssom.tsv` is a static SSSOM file mapping 486 risk-level risks to 4 category-level taxonomies (NIST AI RMF 12 risks, OWASP LLM 10 risks, AILuminate 12 risks, OWASP ASI 10 risks). Built from Nexus mapping files + manually reviewed gap-fill for IBM agentic risks, Credo, MIT, and AIR 2024 (314 risks via group-level inheritance). Contains 802 entries; only strong predicates (exact/close/broadMatch) are used at eval time — relatedMatch is excluded.
