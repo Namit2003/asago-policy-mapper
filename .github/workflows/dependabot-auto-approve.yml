@@ -15,8 +15,9 @@ jobs:
         uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-      - name: Approve and auto-merge patch or minor updates
+      - name: Approve and auto-merge patch, minor, and GitHub Actions updates
         if: >-
+          steps.metadata.outputs.package-ecosystem == 'github_actions' ||
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor'
         run: |
@@ -27,6 +28,7 @@ jobs:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
       - name: Request manual review for major updates
         if: >-
+          steps.metadata.outputs.package-ecosystem != 'github_actions' &&
           steps.metadata.outputs.update-type == 'version-update:semver-major' &&
           (github.event.action == 'opened' || github.event.action == 'reopened')
         run: >-
